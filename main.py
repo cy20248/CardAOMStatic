@@ -1,0 +1,80 @@
+# ============================================================
+# 一人用TCG（静的AOM版 / base流・Boardなし）。
+#   - 既定: 対話（コマンド入力）
+#   - --selftest: 自動進行で検証
+#   コマンド: play <番号> / attack <スロット> f|u<敵スロット> / state / end / quit
+# ============================================================
+
+import argparse
+import sys
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stdin.reconfigure(encoding="utf-8")
+
+from aspect_model_manager import AspectModelManager
+
+
+def run_interactive(manager):
+    manager.start()
+    while not manager.is_ended():
+        try:
+            line = input("> ")
+        except EOFError:
+            break
+        line = line.strip()
+        if line in ("quit", "exit", "q"):
+            break
+        manager.inject_command(line)
+        manager.settle()
+    print("")
+    print("=== 対戦終了 ===")
+
+
+def choose_command(manager):
+    # 動的コレクション: 手札を番号で選んで出す（可否は flow が GR で判定）。
+    flow = manager.flow
+    for i in range(len(flow.hand)):
+        if flow.can_play(i):
+            return "play %d" % i
+    # 攻撃は名前ではなくスロットで指定（相手はスロット/フェイス）。
+    for i, u in enumerate(manager.player_units):
+        if u.state == "OnBoard" and u.can_attack:
+            return "attack %d f" % i
+    return "end"
+
+
+def run_selftest(manager):
+    manager.start()
+    flow = manager.flow
+    for _ in range(400):
+        if manager.is_ended():
+            break
+        if flow.state == "PlayerTurn":
+            cmd = choose_command(manager)
+            print(">>> " + cmd)
+            manager.inject_command(cmd)
+        manager.settle()
+    print("")
+    print("=== selftest 完了 ===")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="一人用TCG（静的AOM版 / base流・Boardなし）")
+    parser.add_argument("--selftest", action="store_true", help="自動進行で検証")
+    args = parser.parse_args()
+
+    manager = AspectModelManager(printer=print)
+
+    print("========================================")
+    print("   一人用TCG（静的AOM版 / base流・Boardなし）")
+    print("========================================")
+
+    if args.selftest:
+        run_selftest(manager)
+    else:
+        run_interactive(manager)
+
+
+if __name__ == "__main__":
+    main()

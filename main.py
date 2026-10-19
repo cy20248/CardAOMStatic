@@ -37,11 +37,12 @@ def choose_command(manager):
     for i in range(len(flow.hand)):
         if flow.can_play(i):
             return "play %d" % i
-    # 攻撃は名前ではなくスロットで指定（相手はスロット/フェイス）。
-    for i, u in enumerate(manager.player_units):
-        if u.state == "OnBoard" and u.can_attack:
+    # 攻撃は名前ではなくスロットで指定（自ロスター添字。相手はフェイス固定）。
+    for i, c in enumerate(manager.player_roster):
+        if c.state == "OnBoard" and c.can_attack:
             return "attack %d f" % i
     return "end"
+
 
 
 def run_selftest(manager):
@@ -60,14 +61,14 @@ def run_selftest(manager):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="一人用TCG（静的AOM版 / base流・Boardなし）")
+    parser = argparse.ArgumentParser(description="一人用TCG（静的AOM版 / base流・カード実体）")
     parser.add_argument("--selftest", action="store_true", help="自動進行で検証")
     args = parser.parse_args()
 
     manager = AspectModelManager(printer=print)
 
     print("========================================")
-    print("   一人用TCG（静的AOM版 / base流・Boardなし）")
+    print("   一人用TCG（静的AOM版 / base流・カード実体）")
     print("========================================")
 
     if args.selftest:

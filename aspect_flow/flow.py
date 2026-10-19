@@ -1,11 +1,11 @@
 # ============================================================
-# FlowAspect（静的AOM版・base流 / Boardなし）。
+# FlowAspect（静的AOM版・base流 / カード＝実体）。
 #   状態: Idle / PlayerTurn / EnemyTurn / Ended
-#   他アスペクトを一切抱えない。協調は manager が配線した規則経由のみ:
-#     - checkEIRules("t_play_<key>")  -> 対象ユニットへ trig_play
-#     - checkEIRules("t_attack_a<i>_<t>") -> 攻撃側へ trig_attack#<t>
-#     - checkGRRules(...)             -> 対象が Dormant/OnBoard か（相手の状態）
-#   相手の名前・一覧・数値は持たない（自分の state/deck/hand/mana のみ）。
+#   自分のデッキ＝CardAspect 実体のリスト（Hand/Deck はカードの state が真実）。
+#   他アスペクト（相手側）は一切抱えない。協調は manager が配線した規則経由のみ:
+#     - checkEIRules("t_play_c<id>") -> そのカード実体へ trig_play
+#     - checkEIRules("t_attack_a<i>_<t>") -> 自ロスター i 番目へ trig_attack#<t>
+#     - checkGRRules(...) -> 対象（手札のカード／攻撃側・相手）の state 参照
 # ============================================================
 
 import random
@@ -14,17 +14,15 @@ from aspect.aspect import Aspect
 
 
 class FlowAspect(Aspect):
-    UNIT_SLOTS = 4
-
-    def __init__(self, deck_keys, card_meta):
+    def __init__(self, deck_cards, roster):
         super().__init__()
         self.state = "Idle"
         self.turn = 0
         self.mana = 0
-        self.maxMana = 3          # 初回 begin_player_turn で +1 され 4 になる
+        self.maxMana = 3
         self.printer = None
-        self.deck_keys = deck_keys
-        self.card_meta = card_meta    # key -> {cost, playable}（カードのデータ）
+        self.deck_cards = deck_cards   # 自分のデッキ（CardAspect 実体）
+        self.roster = roster           # 自分の全カード（デッキ＋インプ）
         self.deck = []
         self.hand = []
 
@@ -33,14 +31,16 @@ class FlowAspect(Aspect):
             self.printer(msg)
 
     def new_game(self):
-        self.deck = list(self.deck_keys)
+        self.deck = list(self.deck_cards)
         random.shuffle(self.deck)
         self.hand = []
 
     def draw(self, n):
         for _ in range(n):
             if self.deck:
-                self.hand.append(self.deck.pop(0))
+                c = self.deck.pop(0)
+                c.state = "Hand"
+                self.hand.append(c)
 
     def run(self):
         while not self.messageQueue.empty():
@@ -100,18 +100,18 @@ class FlowAspect(Aspect):
         if self.state == "Ended":
             return
         self.state = "EnemyTurn"
-        self.checkEIRules("t_begin_enemy")   # -> 各敵ユニットへ trig_begin_turn
+        self.checkEIRules("t_begin_enemy")
         self.log("")
         self.log("===== 敵ターン =====")
-        self.checkEIRules("t_enemy")         # -> AI.trig_ai
+        self.checkEIRules("t_enemy")
 
     def command(self, cmd):
         parts = cmd.split()
         if not parts:
             return
         op = parts[0]
-        if op == "play" and len(parts) >= 2:
-            self.play(parts[1])
+        if op == "play" and len(parts) >= 2 and parts[1].isdigit():
+            self.play(int(parts[1]))
         elif op == "attack" and len(parts) >= 3:
             self.attack(parts[1], parts[2])
         elif op == "state":
@@ -122,71 +122,55 @@ class FlowAspect(Aspect):
         else:
             self.log("不明なコマンド: " + cmd)
 
-    def meta_of(self, key):
-        return self.card_meta.get(key)
-
     def can_play(self, i):
         if not (0 <= i < len(self.hand)):
             return False
-        key = self.hand[i]
-        meta = self.meta_of(key)
-        if meta is None or not meta["playable"]:
+        c = self.hand[i]
+        if not c.playable or c.cost > self.mana:
             return False
-        if meta["cost"] > self.mana:
+        t = "t_play_c%d" % c.id
+        if t not in self.classRulesGR:
             return False
-        return self.checkGRRules("t_play_" + key)
+        return self.checkGRRules(t)
 
-    def play(self, arg):
-        # 動的コレクション: 手札は番号で選ぶ。実体は規則が解決する。
-        if not arg.isdigit():
-            self.log("使い方: play <番号>（例: play 0）")
-            return
-        i = int(arg)
+    def play(self, i):
+        # 手札を番号で選ぶ。実体は規則（t_play_c<id>）が解決する。
         if not (0 <= i < len(self.hand)):
-            self.log("その番号は手札にありません")
+            self.log("使い方: play <手札番号>")
             return
-        key = self.hand[i]
-        meta = self.meta_of(key)
-        if meta is None or not meta["playable"]:
-            self.log("出せません: " + key)
+        c = self.hand[i]
+        if not c.playable:
+            self.log("出せません: " + c.name)
             return
-        if meta["cost"] > self.mana:
-            self.log("マナ不足: %s (コスト%d)" % (key, meta["cost"]))
+        if c.cost > self.mana:
+            self.log("マナ不足: %s (コスト%d)" % (c.name, c.cost))
             return
-        if not self.checkGRRules("t_play_" + key):
-            # GR が「そのユニットが Dormant か」を判定（相手の state を参照）。
-            self.log("出せません（既に別の %s が場にいます）" % key)
+        t = "t_play_c%d" % c.id
+        if t not in self.classRulesGR or not self.checkGRRules(t):
+            self.log("出せません（場の状態が不正）: " + c.name)
             return
-        self.mana -= meta["cost"]
+        self.mana -= c.cost
         self.hand.pop(i)
-        self.checkEIRules("t_play_" + key)     # -> 対象ユニットへ trig_play
-        self.log("召喚: " + key)
+        self.checkEIRules(t)
+        self.log("召喚: " + c.name)
 
     def attack(self, aslot, target):
-        # 名前ではなくスロット指定（実体は規則が解決）。target: f か u<敵スロット>。
-        if not aslot.isdigit() or not self.valid_target(target):
-            self.log("使い方: attack <スロット> f|u<スロット>")
+        if not aslot.isdigit():
+            self.log("使い方: attack <スロット> f|u<敵スロット>")
             return
         t = "t_attack_a%s_%s" % (aslot, target)
+        if t not in self.classRulesGR:
+            self.log("使い方: attack <スロット> f|u<敵スロット>")
+            return
         if not self.checkGRRules(t):
             self.log("攻撃できません（攻撃側か相手が場にいません）")
             return
-        self.checkEIRules(t)     # -> 攻撃側へ trig_attack#<target>
-
-    def valid_target(self, target):
-        if target == "f":
-            return True
-        return (target.startswith("u") and target[1:].isdigit()
-                and int(target[1:]) < self.UNIT_SLOTS)
+        self.checkEIRules(t)
 
     def show(self):
-        def cost_of(key):
-            m = self.meta_of(key)
-            return m["cost"] if m else 0
-        hand_body = ", ".join("%d:%s(%d)" % (i, k, cost_of(k))
-                              for i, k in enumerate(self.hand))
+        hand_body = ", ".join("%d:%s(%d)" % (i, c.name, c.cost)
+                              for i, c in enumerate(self.hand))
         self.log("手札: %s" % (hand_body or "なし"))
         self.log("デッキ残り: %d" % len(self.deck))
         self.log("コマンド: play <番号> / attack <スロット> f|u<敵スロット> / state / end")
-        # 盤面は各アスペクトが自分で申告する（broadcast）。
         self.checkEIRules("t_show")

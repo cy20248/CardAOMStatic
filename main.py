@@ -2,7 +2,8 @@
 # 一人用TCG（静的AOM版 / base流・Boardなし）。
 #   - 既定: 対話（コマンド入力）
 #   - --selftest: 自動進行で検証
-#   コマンド: play <番号> / attack <スロット> f|u<敵スロット> / state / end / quit
+#   モデルコマンド: play <番号> / attack <スロット> f|u<敵スロット> / state / end / quit
+#   ホストコマンド: spawn [p|e] <スロット>（OnBoard のサモナーからインプを実行時生成）
 # ============================================================
 
 import argparse
@@ -15,6 +16,37 @@ if hasattr(sys.stdout, "reconfigure"):
 from aspect_model_manager import AspectModelManager
 
 
+def host_spawn(manager, line):
+    # ホスト駆動のメタ操作（モデルの外）。生成は manager が行う。
+    parts = line.split()
+    owner = "player"
+    if len(parts) == 3:
+        if parts[1] in ("e", "enemy"):
+            owner = "enemy"
+        slot_s = parts[2]
+    elif len(parts) == 2:
+        slot_s = parts[1]
+    else:
+        print("使い方: spawn [p|e] <スロット>")
+        return
+    if not slot_s.isdigit():
+        print("使い方: spawn [p|e] <スロット>")
+        return
+    roster = manager.player_roster if owner == "player" else manager.enemy_roster
+    i = int(slot_s)
+    if not (0 <= i < len(roster)):
+        print("そのスロットは存在しません")
+        return
+    parent = roster[i]
+    if parent is None or parent.key != "summoner" or parent.state != "OnBoard":
+        print("OnBoard のサモナーを指定してください")
+        return
+    imp = manager.spawn_imp(owner, parent)
+    imp.messageQueue.put("trig_play")
+    manager.settle()
+    print("生成: %s（スロット %d）" % (imp.name, imp.slot))
+
+
 def run_interactive(manager):
     manager.start()
     while not manager.is_ended():
@@ -25,6 +57,9 @@ def run_interactive(manager):
         line = line.strip()
         if line in ("quit", "exit", "q"):
             break
+        if line.split()[:1] == ["spawn"]:
+            host_spawn(manager, line)
+            continue
         manager.inject_command(line)
         manager.settle()
     print("")
@@ -39,7 +74,7 @@ def choose_command(manager):
             return "play %d" % i
     # 攻撃は名前ではなくスロットで指定（自ロスター添字。相手はフェイス固定）。
     for i, c in enumerate(manager.player_roster):
-        if c.state == "OnBoard" and c.can_attack:
+        if c is not None and c.state == "OnBoard" and c.can_attack:
             return "attack %d f" % i
     return "end"
 

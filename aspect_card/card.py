@@ -26,6 +26,7 @@ class CardAspect(Aspect):
         self.base_atk = meta["atk"]
         self.base_hp = meta["hp"]
         self.initial_state = initial
+        self.slot = -1          # 置き場所の番号（manager が配線時に注入）
         self.printer = None
         self.reset()
 
@@ -69,11 +70,11 @@ class CardAspect(Aspect):
     def trig_play(self):
         if self.state in ("OnBoard", "Dead"):
             return
-        if not self.checkGRRules("t_play"):
-            return
         self.t_play()
 
     def t_play(self):
+        if not self.checkGRRules("t_play"):
+            return
         self.state = "OnBoard"
         self.atk = self.base_atk
         self.hp = self.base_hp
@@ -97,6 +98,8 @@ class CardAspect(Aspect):
         if self.opp_units is None or j >= len(self.opp_units):
             return
         foe = self.opp_units[j]
+        if foe is None:
+            return
         foe.messageQueue.put("trig_damage#%d" % self.atk)
         self.messageQueue.put("trig_damage#%d" % foe.atk)   # 相互ダメージ
 
@@ -112,7 +115,8 @@ class CardAspect(Aspect):
     def trig_show(self):
         if self.state == "OnBoard":
             mark = " *" if self.can_attack else ""
-            self.log("  [%s] %s %d/%d%s"
-                     % (self.owner, self.name, self.atk, self.hp, mark))
+            side = "P" if self.owner == "player" else "E"
+            self.log("  [%s#%d] %s %d/%d%s"
+                     % (side, self.slot, self.name, self.atk, self.hp, mark))
         elif self.state == "Dead":
             self.log("  [%s] %s (死亡)" % (self.owner, self.name))

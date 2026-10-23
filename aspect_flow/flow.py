@@ -175,5 +175,6 @@ class FlowAspect(Aspect):
                               for i, c in enumerate(self.hand))
         self.log("手札: %s" % (hand_body or "なし"))
         self.log("デッキ残り: %d" % len(self.deck))
-        self.log("コマンド: play <番号> / attack <スロット> f|u<敵スロット> / state / end")
+        self.log("コマンド: play <番号> / attack <自スロット> f|u<敵スロット> / state / end")
+        self.log("スロットは場の [P#n]/[E#n]（例: attack 3 u5）")
         self.checkEIRules("t_show")

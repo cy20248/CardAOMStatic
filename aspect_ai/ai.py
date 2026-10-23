@@ -31,11 +31,14 @@ class AIAspect(Aspect):
         self.hand = []
 
     def draw(self, n):
+        drawn = []
         for _ in range(n):
             if self.deck:
                 c = self.deck.pop(0)
-                c.state = "Hand"
+                c.messageQueue.put("trig_draw")
                 self.hand.append(c)
+                drawn.append(c)
+        return drawn
 
     def run(self):
         while not self.messageQueue.empty():
@@ -62,7 +65,8 @@ class AIAspect(Aspect):
     def act(self):
         self.turn += 1
         self.eMana = min(7, self.eMana + 1)
-        self.draw(3 if self.turn == 1 else 1)
+        for c in self.draw(3 if self.turn == 1 else 1):
+            c.run()
         i = 0
         while i < len(self.hand):
             c = self.hand[i]

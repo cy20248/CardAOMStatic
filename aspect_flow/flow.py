@@ -36,11 +36,14 @@ class FlowAspect(Aspect):
         self.hand = []
 
     def draw(self, n):
+        drawn = []
         for _ in range(n):
             if self.deck:
                 c = self.deck.pop(0)
-                c.state = "Hand"
+                c.messageQueue.put("trig_draw")
                 self.hand.append(c)
+                drawn.append(c)
+        return drawn
 
     def run(self):
         while not self.messageQueue.empty():

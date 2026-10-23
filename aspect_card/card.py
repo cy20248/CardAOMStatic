@@ -1,7 +1,7 @@
 # ============================================================
 # カードの基底アスペクト（静的AOM版・base流）。
 #   状態機械・戦闘・イベント配送（全カード共通）のみを持つ。
-#   種別ごとの挙動は、サブクラスが組む規則（EI/GR）と効果ハンドラで表現する。
+#   種別ごとの効果ハンドラはサブクラスが持つ。規則（EI/GR）の配線は manager が行う。
 #   状態: Deck / Hand / OnBoard / Dead  （インプは Dormant から OnBoard）
 # ============================================================
 
@@ -9,14 +9,10 @@ from aspect.aspect import Aspect
 
 
 class CardAspect(Aspect):
-    # 規則ビルダが要求する文脈キー（manager が解決して ctx で渡す）。
-    #   文字列 = 関係("parent"/"children") / (ctxキー, カードkey) = 同陣営の該当カード群
-    NEEDS = ()
-
     # 戦闘の相手参照（manager が生成時に注入）。既定は持たない。
     opp_hero = None
     opp_units = None
-    # 司祭オーラの判定数（manager が configure で注入）。
+    # 司祭オーラの判定数（manager が配線時に注入）。
     aura_count = 0
 
     def __init__(self, cid, name, key, owner, meta, initial):
@@ -43,21 +39,13 @@ class CardAspect(Aspect):
         if self.printer:
             self.printer(msg)
 
-    # --- 規則ビルダ（サブクラスが上書き） -------------------------
-    def rulesEI(self, ctx):
-        return {}
-
-    def rulesGR(self, ctx):
-        return {}
-
-    def configure(self, ctx):
-        pass
-
     # --- イベント配送（共通） -------------------------------------
     def run(self):
         while not self.messageQueue.empty():
             ev = self.messageQueue.get()
-            if ev == "trig_play":
+            if ev == "trig_draw":
+                self.t_draw()
+            elif ev == "trig_play":
                 self.trig_play()
             elif ev == "trig_boost":
                 self.t_boost()
@@ -71,6 +59,11 @@ class CardAspect(Aspect):
                 self.trig_damage(int(ev.split("#", 1)[1]))
             elif ev == "trig_show":
                 self.trig_show()
+
+    # --- 引く（共通） ---------------------------------------------
+    def t_draw(self):
+        if self.state == "Deck":
+            self.state = "Hand"
 
     # --- 場に出る（共通） -----------------------------------------
     def trig_play(self):

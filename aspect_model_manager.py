@@ -15,6 +15,7 @@
 from aspect.aspect_relation_rule import InjectionEventRule, ConditionRule
 from aspect_flow.flow import FlowAspect
 from aspect_ai.ai import AIAspect
+from aspect_card import CARD_DEFS
 from aspect_hero.hero import HeroAspect
 
 from model_factory import CardFactory, PLAYER_DECK, ENEMY_DECK
@@ -38,20 +39,16 @@ class AspectModelManager:
         self.factory = CardFactory(self.printer)
         self._children = {}   # 親カード -> [生成した子カード]
         self._parent = {}     # 子カード -> 親カード
-        self._spawned_summoners = set()   # 生成を済ませたサモナー（1体につき1回）
+        self._spawned_cards = set()   # spawns を実行済みのカード（1体につき1回）
         self.initInstances()
         self.initRules()
 
     # --- 実体の生成 -------------------------------------------------
     def initInstances(self):
-        self.p_deck, self.player_roster, p_children, p_parents = (
-            self.factory.build_side("player", PLAYER_DECK, "P"))
-        self.e_deck, self.enemy_roster, e_children, e_parents = (
-            self.factory.build_side("enemy", ENEMY_DECK, "E"))
-        self._children.update(p_children)
-        self._children.update(e_children)
-        self._parent.update(p_parents)
-        self._parent.update(e_parents)
+        self.p_deck, self.player_roster = self.factory.build_side(
+            "player", PLAYER_DECK, "P")
+        self.e_deck, self.enemy_roster = self.factory.build_side(
+            "enemy", ENEMY_DECK, "E")
 
         self.p_hero = HeroAspect("P_Hero", "player")
         self.e_hero = HeroAspect("E_Hero", "enemy")
@@ -241,17 +238,17 @@ class AspectModelManager:
     def _roster(self, owner):
         return self.player_roster if owner == "player" else self.enemy_roster
 
-    def spawn_imp(self, owner, parent, initial="Dormant", name=None):
-        # 実行時にインプを1体生成し、即時束縛で配線する。
-        #   対象は imp のみ。イベントは発火しないので、呼び出し側が
-        #   必要なら trig_play を注入して settle する。
+    def spawn_card(self, owner, parent, key="imp", initial="Dormant", name=None):
+        # 実行時にカードを1体生成し、即時束縛で配線する。
+        #   イベントは発火しないので、呼び出し側が必要なら
+        #   trig_play を注入して settle する。
         if parent is None:
-            raise ValueError("imp には parent（サモナー実体）が必要です")
+            raise ValueError("生成カードには parent（親実体）が必要です")
         self._reap()
         if name is None:
             prefix = "P" if owner == "player" else "E"
-            name = "%s_imp_dyn%d" % (prefix, self.factory.cid)
-        card = self.factory.new_card("imp", owner, name, initial)
+            name = "%s_%s_dyn%d" % (prefix, key, self.factory.cid)
+        card = self.factory.new_card(key, owner, name, initial)
 
         # 死んだスロット（None）を再利用し、無ければ末尾に追加する（添字は詰めない）。
         roster = self._roster(owner)
@@ -279,20 +276,28 @@ class AspectModelManager:
         self.aspects.append(card)
         return card
 
+    def spawn_imp(self, owner, parent, initial="Dormant", name=None):
+        return self.spawn_card(owner, parent, "imp", initial, name)
+
     def _auto_spawns(self):
-        # 反応バッチが落ち着いた時点で、新しく場に出たサモナーを観測して生成する。
+        # 反応バッチが落ち着いた時点で、場に出たカードの spawns 指定を実行する。
         #   生成はモデルの外（実行層）の仕事。カードは要求を持たない。
         spawned = False
         for roster in (self.player_roster, self.enemy_roster):
             for c in list(roster):
-                if c is None or c.key != "summoner" or c.state != "OnBoard":
+                if c is None or c.state != "OnBoard":
                     continue
-                if c in self._spawned_summoners:
+                if c in self._spawned_cards:
                     continue
-                self._spawned_summoners.add(c)
-                card = self.spawn_imp(c.owner, c)
-                card.messageQueue.put("trig_play")
-                spawned = True
+                spec = CARD_DEFS[c.key].get("spawns")
+                if not spec:
+                    continue
+                self._spawned_cards.add(c)
+                ckey, n = spec
+                for _ in range(n):
+                    card = self.spawn_card(c.owner, c, ckey)
+                    card.messageQueue.put("trig_play")
+                    spawned = True
         return spawned
 
     # --- 寿命 -------------------------------------------------------
@@ -306,7 +311,7 @@ class AspectModelManager:
                     if c in self.aspects:
                         self.aspects.remove(c)
                     self._detach_links(c)
-                    self._spawned_summoners.discard(c)
+                    self._spawned_cards.discard(c)
                     changed = True
         if changed:
             self._rewire()
